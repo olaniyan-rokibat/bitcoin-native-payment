@@ -299,3 +299,75 @@
     (ok true)
   )
 )
+
+;; Finalizes unilateral channel close after dispute period
+(define-public (resolve-unilateral-close
+    (channel-id (buff 32))
+    (participant-b principal)
+  )
+  (let (
+      (channel (unwrap!
+        (map-get? payment-channels {
+          channel-id: channel-id,
+          participant-a: tx-sender,
+          participant-b: participant-b,
+        })
+        ERR-CHANNEL-NOT-FOUND
+      ))
+      (proposed-balance-a (get balance-a channel))
+      (proposed-balance-b (get balance-b channel))
+    )
+    ;; Validate inputs
+    (asserts! (is-valid-channel-id channel-id) ERR-INVALID-INPUT)
+    (asserts! (not (is-eq tx-sender participant-b)) ERR-INVALID-INPUT)
+    ;; Ensure dispute period has passed
+    (asserts! (>= stacks-block-height (get dispute-deadline channel))
+      ERR-DISPUTE-PERIOD
+    )
+    ;; Transfer funds based on proposed balances
+    (try! (as-contract (stx-transfer? proposed-balance-a tx-sender tx-sender)))
+    (try! (as-contract (stx-transfer? proposed-balance-b tx-sender participant-b)))
+    ;; Close the channel
+    (map-set payment-channels {
+      channel-id: channel-id,
+      participant-a: tx-sender,
+      participant-b: participant-b,
+    }
+      (merge channel {
+        is-open: false,
+        balance-a: u0,
+        balance-b: u0,
+        total-deposited: u0,
+      })
+    )
+    (ok true)
+  )
+)
+
+;; Read-Only Functions
+
+;; Returns detailed information about a specific payment channel
+(define-read-only (get-channel-info
+    (channel-id (buff 32))
+    (participant-a principal)
+    (participant-b principal)
+  )
+  (map-get? payment-channels {
+    channel-id: channel-id,
+    participant-a: participant-a,
+    participant-b: participant-b,
+  })
+)
+
+;; Administrative Functions
+
+;; Emergency funds withdrawal by contract owner (security safeguard)
+(define-public (emergency-withdraw)
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
+    (try! (stx-transfer? (stx-get-balance (as-contract tx-sender))
+      (as-contract tx-sender) CONTRACT-OWNER
+    ))
+    (ok true)
+  )
+)
