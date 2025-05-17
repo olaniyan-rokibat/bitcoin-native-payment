@@ -245,3 +245,57 @@
     (ok true)
   )
 )
+
+;; Initiates unilateral channel close with dispute period
+(define-public (initiate-unilateral-close
+    (channel-id (buff 32))
+    (participant-b principal)
+    (proposed-balance-a uint)
+    (proposed-balance-b uint)
+    (signature (buff 65))
+  )
+  (let (
+      (channel (unwrap!
+        (map-get? payment-channels {
+          channel-id: channel-id,
+          participant-a: tx-sender,
+          participant-b: participant-b,
+        })
+        ERR-CHANNEL-NOT-FOUND
+      ))
+      (total-channel-funds (get total-deposited channel))
+      ;; Create message for signature verification
+      (message (concat (concat channel-id (uint-to-buff proposed-balance-a))
+        (uint-to-buff proposed-balance-b)
+      ))
+    )
+    ;; Validate inputs
+    (asserts! (is-valid-channel-id channel-id) ERR-INVALID-INPUT)
+    (asserts! (is-valid-signature signature) ERR-INVALID-INPUT)
+    (asserts! (not (is-eq tx-sender participant-b)) ERR-INVALID-INPUT)
+    ;; Validate channel is open
+    (asserts! (get is-open channel) ERR-CHANNEL-CLOSED)
+    ;; Verify signature matches proposed balances
+    (asserts! (verify-signature message signature tx-sender)
+      ERR-INVALID-SIGNATURE
+    )
+    ;; Validate total balances match total deposited
+    (asserts!
+      (is-eq total-channel-funds (+ proposed-balance-a proposed-balance-b))
+      ERR-INSUFFICIENT-FUNDS
+    )
+    ;; Set dispute deadline (e.g., 7 days from now)
+    (map-set payment-channels {
+      channel-id: channel-id,
+      participant-a: tx-sender,
+      participant-b: participant-b,
+    }
+      (merge channel {
+        dispute-deadline: (+ stacks-block-height u1008), ;; ~7 days at 10-minute blocks
+        balance-a: proposed-balance-a,
+        balance-b: proposed-balance-b,
+      })
+    )
+    (ok true)
+  )
+)
