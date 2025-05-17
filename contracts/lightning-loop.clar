@@ -58,3 +58,85 @@
 (define-private (is-valid-deposit (amount uint))
   (> amount u0)
 )
+
+;; Validates cryptographic signature format
+(define-private (is-valid-signature (signature (buff 65)))
+  (and
+    (is-eq (len signature) u65)
+    ;; Additional signature validation can be added here
+    true
+  )
+)
+
+;; Creates a standardized channel state message for signing
+(define-private (create-channel-message
+    (channel-id (buff 32))
+    (balance-a uint)
+    (balance-b uint)
+    (nonce uint)
+  )
+  (concat
+    (concat (concat channel-id (uint-to-buff balance-a)) (uint-to-buff balance-b))
+    (uint-to-buff nonce)
+  )
+)
+
+;; Converts uint to buffer for message construction
+(define-private (uint-to-buff (n uint))
+  (unwrap-panic (to-consensus-buff? n))
+)
+
+;; Helper function to verify signature - simplified for Clarinet compatibility
+;; In production, use proper secp256k1 verification
+(define-private (verify-signature
+    (message (buff 256))
+    (signature (buff 65))
+    (signer principal)
+  )
+  ;; Direct principal comparison for simplified verification
+  (if (is-eq tx-sender signer)
+    true
+    false
+  )
+)
+
+;; Channel Creation & Funding
+
+;; Creates a new payment channel between two participants
+(define-public (create-channel
+    (channel-id (buff 32))
+    (participant-b principal)
+    (initial-deposit uint)
+  )
+  (begin
+    ;; Validate inputs
+    (asserts! (is-valid-channel-id channel-id) ERR-INVALID-INPUT)
+    (asserts! (is-valid-deposit initial-deposit) ERR-INVALID-INPUT)
+    (asserts! (not (is-eq tx-sender participant-b)) ERR-INVALID-INPUT)
+    ;; Ensure channel doesn't already exist
+    (asserts!
+      (is-none (map-get? payment-channels {
+        channel-id: channel-id,
+        participant-a: tx-sender,
+        participant-b: participant-b,
+      }))
+      ERR-CHANNEL-EXISTS
+    )
+    ;; Transfer initial deposit from creator
+    (try! (stx-transfer? initial-deposit tx-sender (as-contract tx-sender)))
+    ;; Create channel entry
+    (map-set payment-channels {
+      channel-id: channel-id,
+      participant-a: tx-sender,
+      participant-b: participant-b,
+    } {
+      total-deposited: initial-deposit,
+      balance-a: initial-deposit,
+      balance-b: u0,
+      is-open: true,
+      dispute-deadline: u0,
+      nonce: u0,
+    })
+    (ok true)
+  )
+)
